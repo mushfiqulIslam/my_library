@@ -2,6 +2,8 @@ from datetime import timedelta
 
 from odoo import api, models, fields
 from odoo.exceptions import ValidationError
+from odoo.exceptions import UserError
+from odoo.tools.translate import _
 
 
 class BaseArchive(models.AbstractModel):
@@ -68,6 +70,39 @@ class LibraryBook(models.Model):
         compute_sudo=True,
     )
     ref_doc_id = fields.Reference(selection='_referencable_models', string='Reference Document')
+    state = fields.Selection([
+        ('draft', 'Unavailable'),
+        ('available', 'Available'),
+        ('borrowed', 'Borrowed'),
+        ('lost', 'Lost')],
+        'State', default="draft")
+
+    @api.model
+    def is_allowed_transition(self, old_state, new_state):
+        allowed = [('draft', 'available'),
+                   ('available', 'borrowed'),
+                   ('borrowed', 'available'),
+                   ('available', 'lost'),
+                   ('borrowed', 'lost'),
+                   ('lost', 'available')]
+        return (old_state, new_state) in allowed
+
+    def change_state(self, new_state):
+        for book in self:
+            if book.is_allowed_transition(book.state, new_state):
+                book.state = new_state
+            else:
+                message = _('Moving from %s to %s is not allowd') % (book.state, new_state)
+                raise UserError(message)
+
+    def make_available(self):
+        self.change_state('available')
+
+    def make_borrowed(self):
+        self.change_state('borrowed')
+
+    def make_lost(self):
+        self.change_state('lost')
 
     @api.model
     def _referencable_models(self):
@@ -127,6 +162,39 @@ class LibraryBook(models.Model):
         for record in self:
             if record.date_release and record.date_release > fields.Date.today():
                 raise models.ValidationError('Release date must be in the past')
+
+    def log_all_library_members(self):
+        library_member_model = self.env['library.member']  # This is an empty recordset of model library.member
+        all_members = library_member_model.search([])
+        print("ALL MEMBERS:", all_members)
+        return True
+
+    def create_categories(self):
+        categ1 = {
+            'name': 'Childrens fiction',
+            'description': 'For kids'
+        }
+        categ2 = {
+            'name': 'Young adult fiction',
+            'description': ''
+        }
+        categ3 = {
+            'name': 'Adult fiction',
+            'description': 'Age more than 18'
+        }
+        parent_category_val = {
+            'name': 'Fiction',
+            'description': 'Fiction is any creative work (chiefly, any narrative work) consisting of people, events, \
+            or places that are imaginary—in other words, not based strictly on history or facts.',
+            'child_ids': [
+                (0, 0, categ1),
+                (0, 0, categ2),
+                (0, 0, categ3),
+            ]
+        }
+        # Total 3 records (1 parent and 2 child) will be craeted in library.book.category model
+        record = self.env['library.book.category'].create(parent_category_val)
+        return True
 
 
 class ResPartner(models.Model):
