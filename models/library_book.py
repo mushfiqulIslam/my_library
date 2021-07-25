@@ -1,9 +1,11 @@
+import logging
 from datetime import timedelta
 
 from odoo import api, models, fields
-from odoo.exceptions import ValidationError
 from odoo.exceptions import UserError
 from odoo.tools.translate import _
+
+logger = logging.getLogger(__name__)
 
 
 class BaseArchive(models.AbstractModel):
@@ -76,6 +78,7 @@ class LibraryBook(models.Model):
         ('borrowed', 'Borrowed'),
         ('lost', 'Lost')],
         'State', default="draft")
+    manager_remarks = fields.Text('Manager Remarks')
 
     @api.model
     def is_allowed_transition(self, old_state, new_state):
@@ -195,6 +198,74 @@ class LibraryBook(models.Model):
         # Total 3 records (1 parent and 2 child) will be craeted in library.book.category model
         record = self.env['library.book.category'].create(parent_category_val)
         return True
+
+    def change_release_date(self):
+        self.ensure_one()
+        self.date_release = fields.Date.today()
+
+    def find_book(self):
+        domain = [
+            '|',
+            '&', ('name', 'ilike', 'Book Name'),
+            ('category_id.name', '=', 'Category Name'),
+            '&', ('name', 'ilike', 'Book Name 2'),
+            ('category_id.name', '=', 'Category Name 2')
+        ]
+        books = self.search(domain)
+        logger.info('Books found: %s', books)
+        return True
+
+    # Filter recordset
+    def filter_books(self):
+        all_books = self.search([])
+        filtered_books = self.books_with_multiple_authors(all_books)
+        logger.info('Filtered Books: %s', filtered_books)
+
+    @api.model
+    def books_with_multiple_authors(self, all_books):
+        def predicate(book):
+            if len(book.author_ids) > 1:
+                return True
+
+        return all_books.filtered(predicate)
+
+    def mapped_books(self):
+        all_books = self.search([])
+        books_authors = self.get_author_names(all_books)
+        logger.info('Books Authors: %s', books_authors)
+
+    @api.model
+    def get_author_names(self, all_books):
+        return all_books.mapped('author_ids.name')
+
+    def sort_books(self):
+        all_books = self.search([])
+        books_sorted = self.sort_books_by_date(all_books)
+        logger.info('Books before sorting: %s', all_books)
+        logger.info('Books after sorting: %s', books_sorted)
+
+    @api.model
+    def sort_books_by_date(self, all_books):
+        return all_books.sorted(key='date_release')
+
+    @api.model
+    def create(self, values):
+        if not self.user_has_groups('my_library.group_librarian'):
+            if 'manager_remarks' in values:
+                raise UserError(
+                    'You are not allowed to modify '
+                    'manager_remarks'
+                )
+        return super(LibraryBook, self).create(values)
+
+    def write(self, values):
+        if not self.user_has_groups('my_library.group_librarian'):
+            if 'manager_remarks' in values:
+                raise UserError(
+                    'You are not allowed to modify '
+                    'manager_remarks'
+                )
+        return super(LibraryBook, self).write(values)
 
 
 class ResPartner(models.Model):
